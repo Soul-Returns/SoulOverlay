@@ -4,7 +4,7 @@ services:
       context: .
       dockerfile: Dockerfile
     ports:
-      - "80:80"
+      - "1420:80"
     environment:
       # Get your free API key at https://uexcorp.space/api
       # Copy .env.example to .env and set UEX_API_KEY before running.
