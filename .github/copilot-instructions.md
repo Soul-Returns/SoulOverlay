@@ -24,6 +24,9 @@ npm run tauri dev
 
 # Full release build → src-tauri/target/release/bundle/nsis/SoulOverlay_*_setup.exe
 npm run tauri build
+
+# Web demo build (browser-only, no Tauri) → dist-web/
+npm run build:web
 ```
 
 No ESLint, Prettier, Vitest, or `#[cfg(test)]` suites exist. Quality is enforced by
@@ -40,6 +43,7 @@ Format: `[timestamp][LEVEL][module] message`. Set `RUST_LOG=debug` for verbose o
 ```
 src/                                 # Vue 3 + TypeScript frontend
 ├── assets/main.css                  # Tailwind directives + global font
+├── lib/web/                         # Browser shims (invoke, event, opener) for web demo build
 ├── components/
 │   ├── icons/                       # SVG icon wrappers (template-only, use currentColor)
 │   ├── layout/                      # StatusBar, TabBar
@@ -60,6 +64,7 @@ src-tauri/src/                       # Rust backend
 ├── state.rs                         # AppState struct (all Mutex-wrapped fields + AppPaths + UexClient)
 ├── app_setup.rs                     # .setup() initialization sequence + background prefetch
 ├── settings.rs                      # Settings struct (pure serde data)
+├── activity.rs                      # ActivityLog: tracks API fetch events + last user actions
 ├── database.rs                      # SQLite connection init, WAL mode, schema migrations
 ├── cache_store.rs                   # CacheStore: per-collection TTL, in-memory HashMap + SQLite persistence
 ├── logging.rs                       # fern dual-logger setup (stderr + file, path from config)
@@ -287,3 +292,60 @@ hook callbacks — `run_on_main_thread` can deadlock when the overlay is focused
 `commands::uex::uex_search`). `pub use` re-exports do NOT carry the hidden `__cmd__` items.
 
 **Tauri IPC**: Events via `app.emit("kebab-name", json!({...}))`.
+
+## Web Demo Branch (`web-demo`)
+
+The `web-demo` branch adds a browser-only build of the overlay that runs without the Rust
+backend. It is always rebased on top of `main` (or release branches) and deployed to a
+Linux VPS via Docker.
+
+### Branch Strategy
+
+- Never merge `web-demo` into `main`. Rebase it on top of `main` after main changes.
+- Web-demo-only files: `Dockerfile`, `docker-compose.yml`, `nginx/`, `.env.example`,
+  `vite.web.config.ts`, `src/lib/web/`, `dist-web/`.
+- The Vue frontend code in `src/` is shared — changes on `main` flow into `web-demo`
+  via rebase. The shim layer makes them work without Tauri.
+
+### Shim Architecture
+
+`vite.web.config.ts` aliases Tauri imports to browser shims at build time:
+
+| Tauri import | Shim | Strategy |
+|---|---|---|
+| `@tauri-apps/api/core` | `src/lib/web/invoke.ts` | Routes `invoke()` calls to `/api/uex/` fetch or localStorage |
+| `@tauri-apps/api/event` | `src/lib/web/event.ts` | No-op `listen()` / `emit()` — game events don't apply |
+| `@tauri-apps/plugin-opener` | `src/lib/web/opener.ts` | Delegates to `window.open()` |
+
+**`invoke.ts`** is the largest shim (~1100 lines). It:
+- Handles every `invoke()` command the frontend can call via a `switch` block
+- Fetches from `/api/uex/` (proxied by nginx to `uexcorp.space/api/2.0/`)
+- Transforms raw UEX API DTOs into the same shapes the Rust backend returns
+  (`ApiResponse<T>` envelope with `ok`, `data`, `error`, `stale` fields)
+- Persists settings and favorites in `localStorage` (no SQLite)
+- Returns no-op responses for game/overlay/hotkey/cache commands
+
+When adding a new Tauri command on `main`, `invoke.ts` needs a matching `case` after
+rebase — the `default` case logs a warning but returns `undefined`.
+
+### Build & Deploy
+
+```bash
+# Local dev (Vite dev server with proxy, no Docker)
+npx vite --config vite.web.config.ts
+# → http://localhost:1421
+
+# Docker build & run
+cp .env.example .env          # set UEX_API_KEY
+docker compose up -d --build  # nginx on port 1420
+```
+
+**Docker stack**: two-stage Dockerfile — `node:20-alpine` builds with `npm run build:web`,
+then `nginx:1.27-alpine` serves `dist-web/` and proxies `/api/uex/` to UEX Corp
+(injecting `Authorization: Bearer $UEX_API_KEY` via `envsubst` on the nginx template).
+
+### Key Constraints — Web Demo
+
+- Do NOT import from `@tauri-apps/*` in `src/lib/web/` — those files *are* the shims
+- DTO interfaces in `invoke.ts` must stay in sync with Rust structs in `src-tauri/src/uex/`
+- The `ApiResponse<T>` envelope shape must match `commands/api.rs` exactly
