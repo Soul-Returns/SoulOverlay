@@ -27,15 +27,4 @@ export default defineConfig({
     outDir: "dist-web",
     emptyOutDir: true,
   },
-  // Keep the dev server config for local testing
-  server: {
-    port: 1421,
-    proxy: {
-      "/api/uex": {
-        target: "https://uexcorp.space/api/2.0",
-        changeOrigin: true,
-        rewrite: (path) => path.replace(/^\/api\/uex/, ""),
-      },
-    },
-  },
 });

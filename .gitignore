@@ -3,6 +3,9 @@ node_modules/
 dist/
 dist-web/
 
+# Generated static data (built by npm run fetch:data)
+public/data/
+
 # Rust build artifacts
 src-tauri/target/
 
