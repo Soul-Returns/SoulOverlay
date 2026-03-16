@@ -35,9 +35,18 @@ async function handleSave() {
   saveSuccess.value = false;
 
   try {
-    // Preserve cache_ttls from the live store — TTLs are edited inline via CacheSettingsPanel,
-    // not through this form, so form.value.cache_ttls may be stale.
-    const toSave = { ...form.value, cache_ttls: toRaw(settingsStore.settings).cache_ttls };
+    // Preserve fields edited by other panels — their values in form.value may be stale.
+    // cache_ttls: edited inline by CacheSettingsPanel
+    // hotkey + keybinds: edited by KeybindsModal
+    // layout_widths: edited by drag handles in App.vue
+    const live = toRaw(settingsStore.settings);
+    const toSave: Settings = {
+      ...form.value,
+      cache_ttls: live.cache_ttls,
+      hotkey: live.hotkey,
+      keybinds: { ...live.keybinds },
+      layout_widths: { ...live.layout_widths },
+    };
     await settingsStore.saveSettings(toSave);
     saveSuccess.value = true;
     setTimeout(() => {
